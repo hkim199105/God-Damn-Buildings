@@ -1,7 +1,7 @@
 # God-Damn-Buildings
 Program for extraction of illegal constructions or buildings based on Road Name Address System
 
-<Result>
+# Result
 the number of Targeted Addresses               4109
 
 the number of Geocoded Addresses by DaumKakao  3484  (84.7895%)
