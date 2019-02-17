@@ -16,7 +16,7 @@ Extracting program of illegal constructions or buildings from Road Name Address 
 import sys
 import pandas as pd
 import requests
-from geopandas import GeoDataFrame
+import geopandas
 from shapely.geometry import Point
 
 def extractFromKaisSeum():
@@ -89,33 +89,92 @@ def extractFromKaisSeum():
 	return
 
 def geocodeRNA():
+	# set things
+	cntGeocodedNaver = 0
+	cntGeocodedKakao = 0
+	cntGeocodedGoogle = 0
+
+	cntGeocoded = 0
+
+	# read data from file
 	dfResult1 = pd.read_csv('output/dfResult1.txt', sep=u"\n", header=None, encoding='EUC-KR')
+	cntTotal =  dfResult1.count()
+
+	# iterate geocoding
 	for index, row in dfResult1.iterrows():
 		mAddresses = dfResult1.loc[index, 0]
-		url = 'https://naveropenapi.apigw.ntruss.com/map-geocode/v2/geocode?query=' + mAddresses
-		headers = {'content-type': 'application/json', 'Accept-Charset': 'UTF-8', 'X-NCP-APIGW-API-KEY-ID':'x', 'X-NCP-APIGW-API-KEY': 'x'}
+
+		##### DaumKakao API
+		url = 'https://dapi.kakao.com/v2/local/search/address.json?query=' + mAddresses
+		headers = {'content-type': 'application/json', 'Authorization': 'KakaoAK '}
 		r = requests.get(url, headers=headers).json()
-		if r['addresses'] and len(r['addresses']) > 0:
-			mX = r['addresses'][0]['x']
-			mY = r['addresses'][0]['y']
+		if r['documents'] and len(r['documents']) > 0:
+			mX = r['documents'][0]['x']
+			mY = r['documents'][0]['y']
 			dfResult1.loc[index, 'x'] = mX
 			dfResult1.loc[index, 'y'] = mY
-			print(mAddresses + ' geocoded.\t(x: ' + mX + '\ty:' + mY + ')')
+			cntGeocodedKakao = cntGeocodedKakao + 1
+			cntGeocoded = cntGeocoded + 1
+			print(str(index) + '\tK\t' + mAddresses + ' geocoded.\t(x: ' + str(mX) + '\ty:' + str(mY) + ')')
+
 		else:
-			print(mAddresses + ' geocode failed.')
+			##### Naver API
+			url = 'https://naveropenapi.apigw.ntruss.com/map-geocode/v2/geocode?query=' + mAddresses
+			headers = {'content-type': 'application/json', 'Accept-Charset': 'UTF-8', 'X-NCP-APIGW-API-KEY-ID':'', 'X-NCP-APIGW-API-KEY': ''}
+			r = requests.get(url, headers=headers).json()
+			if r['addresses'] and len(r['addresses']) > 0:
+				mX = r['addresses'][0]['x']
+				mY = r['addresses'][0]['y']
+				dfResult1.loc[index, 'x'] = mX
+				dfResult1.loc[index, 'y'] = mY
+				cntGeocodedNaver = cntGeocodedNaver + 1
+				cntGeocoded = cntGeocoded + 1
+				print(str(index) + '\tN\t' + mAddresses + ' geocoded.\t(x: ' + mX + '\ty:' + mY + ')')
 
+			else:
+				##### Google API
+				url = 'https://maps.googleapis.com/maps/api/geocode/json?key=&address=' + mAddresses
+				r = requests.get(url).json()
+				# "status" : "OVER_QUERY_LIMIT"
 
-	dfResult1.to_csv('output/dfResult1_geocoded.csv', sep='\n', index=False, encoding='EUC-KR')
+				if r['status'] == "OK" and r['results'] and len(r['results']) > 0:
+					mLocation = r['results'][0]['geometry']['location']
+					mX = mLocation['lng']
+					mY = mLocation['lat']
+					cntGeocodedGoogle = cntGeocodedGoogle + 1
+					cntGeocoded = cntGeocoded + 1
+					print(str(index) + '\tG\t' + mAddresses + ' geocoded.\t(x: ' + str(mX) + '\ty:' + str(mY) + ')')
+
+				else:
+					print(str(index) + '\t\t' + mAddresses + ' geocode FAILED!!!!')
+
+	# log
+	print("# of Targeted Addresses: " + str(cntTotal))
+	print("# of Geocoded Addresses by Naver: " + str(cntGeocodedNaver) + "(" + str(cntGeocodedNaver/cntTotal) + "% succeeded)")
+	print("# of Geocoded Addresses by DaumKakao: " + str(cntGeocodedKakao) + "(" + str(cntGeocodedKakao/cntTotal) + "% succeeded)")
+	print("# of Geocoded Addresses by Google: " + str(cntGeocodedGoogle) + "(" + str(cntGeocodedGoogle/cntTotal) + "% succeeded)")
+	print("# of Geocoded Addresses: " + str(cntGeocoded) + "(" + str(cntGeocoded/cntTotal) + "% succeeded)")
+
+	# print geocoded data
+	dfResult1.to_csv('output/dfResult1_geocoded.csv', sep='\t', index=False, encoding='EUC-KR')
 
 	return
 
 def convertCSVtoSHP():
-	dfTemp = pd.read_csv('output/dfResult1_geocoded.csv', sep=u"\n", header=None, encoding='EUC-KR')
+	# read data from file
+	df = pd.read_csv('output/dfResult1_geocoded.csv', sep='\t', encoding='EUC-KR')
 
-	geometry = [Point(xy) for xy in zip(dfTemp.x, dfTemp.y)]
-	crs = {'init': 'epsg:4326'}
-	geo_df = GeoDataFrame(dfTemp, crs=crs, geometry=geometry)
-	geo_df.to_file(driver='ESRI Shapefile', filename='output/Result_geocoded.shp')
+	# drop worthless data
+	df = df.dropna(subset=['x']).dropna(subset=['y']).drop('0', 1)
+
+	# combine x, y column to a shapely Point() object
+	df['geometry'] = df.apply(lambda a: Point((float(a.x), float(a.y))), axis=1)
+
+	# convert the pandas DataFrame into a GeoDataFrame
+	df = geopandas.GeoDataFrame(df, geometry='geometry')
+
+	# print the GeoDataFrame into a shapefile
+	df.to_file('output/dfResult1_geocoded.shp', driver='ESRI Shapefile')
 
 	return
 
